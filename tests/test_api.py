@@ -18,6 +18,12 @@ UA_SAMSUNG_S22 = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
+UA_IPHONE_18 = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/18.0 Mobile/15E148 Safari/604.1"
+)
+
 
 @pytest.fixture
 async def client():
@@ -35,6 +41,7 @@ async def test_post_identify_pixel(client):
     assert "Pixel 8" in data["model"]
     assert data["confidence"] == "high"
     assert data["identified"] is True
+    assert "possible_models" in data
 
 
 @pytest.mark.anyio
@@ -55,6 +62,39 @@ async def test_post_identify_with_client_hints(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["model"] == "Galaxy S22 Ultra"
+
+
+@pytest.mark.anyio
+async def test_post_identify_iphone_with_screen(client):
+    """iPhone + screen dimensions should resolve to specific model(s)."""
+    resp = await client.post("/api/identify", json={
+        "user_agent": UA_IPHONE_18,
+        "screen_width": 402,
+        "screen_height": 874,
+        "device_pixel_ratio": 3.0,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["brand"] == "Apple"
+    assert data["model"] == "iPhone 16 Pro"
+    assert data["confidence"] == "high"
+    assert data["possible_models"] == ["iPhone 16 Pro"]
+
+
+@pytest.mark.anyio
+async def test_post_identify_iphone_with_gpu(client):
+    """iPhone + screen + GPU chip should narrow further."""
+    resp = await client.post("/api/identify", json={
+        "user_agent": UA_IPHONE_18,
+        "screen_width": 393,
+        "screen_height": 852,
+        "device_pixel_ratio": 3.0,
+        "gpu_chip": "A18",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["brand"] == "Apple"
+    assert set(data["possible_models"]) == {"iPhone 16", "iPhone 16e"}
 
 
 @pytest.mark.anyio

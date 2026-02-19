@@ -14,7 +14,7 @@
     #result.identified { background: #e8f5e9; }
     #result.unidentified { background: #fff3e0; }
     .field { margin: 0.4rem 0; }
-    .label { font-weight: 600; display: inline-block; min-width: 100px; }
+    .label { font-weight: 600; display: inline-block; min-width: 120px; }
     .confidence-high { color: #2e7d32; }
     .confidence-medium { color: #f57f17; }
     .confidence-low { color: #e65100; }
@@ -22,6 +22,7 @@
     #spinner { display: none; margin-top: 1rem; }
     button { padding: 0.5rem 1.5rem; border: none; border-radius: 6px; background: #1976d2; color: #fff; font-size: 1rem; cursor: pointer; }
     button:hover { background: #1565c0; }
+    .possible { margin-top: 0.5rem; padding: 0.5rem; background: rgba(0,0,0,0.05); border-radius: 4px; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -34,23 +35,99 @@
   <script>
     document.getElementById('detect-btn').addEventListener('click', run);
 
+    // ---------------------------------------------------------------
+    // Canvas GPU fingerprinting (based on 51Degrees Renderer concept)
+    //
+    // Different Apple GPU generations render anti-aliased diagonal
+    // lines and curves with subtly different sub-pixel patterns.
+    // We draw a deterministic scene, hash the pixels, and map known
+    // hashes to GPU chip names on the server.
+    //
+    // For this implementation we send a compact FNV-1a hash of the
+    // rendered pixels.  The server doesn't yet have a full hash→chip
+    // lookup table (that requires calibration on real devices), but
+    // the infrastructure is in place for it.
+    // ---------------------------------------------------------------
+
+    function getCanvasFingerprint() {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 67;
+        canvas.height = 67;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        // Draw a complex scene that exercises GPU anti-aliasing
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(0, 0, 67, 67);
+
+        // Diagonal lines (anti-aliasing differs across GPU generations)
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(2, 2);
+        ctx.lineTo(65, 65);
+        ctx.moveTo(65, 2);
+        ctx.lineTo(2, 65);
+        ctx.stroke();
+
+        // Arcs and curves
+        ctx.strokeStyle = '#1a73e8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(33, 33, 28, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255, 107, 107, 0.7)';
+        ctx.beginPath();
+        ctx.arc(25, 25, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bezier curve
+        ctx.strokeStyle = '#2e7d32';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(5, 50);
+        ctx.bezierCurveTo(15, 10, 50, 60, 62, 20);
+        ctx.stroke();
+
+        // Text rendering (font rasterization also varies)
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#000';
+        ctx.fillText('Mq@#', 8, 62);
+
+        return canvas.toDataURL();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function fnv1aHash(str) {
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        hash ^= str.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16);
+    }
+
     async function run() {
       const spinner = document.getElementById('spinner');
       const resultEl = document.getElementById('result');
       spinner.style.display = 'block';
       resultEl.style.display = 'none';
 
-      // --- Phase 1: gather Client Hints in the browser ---
+      // --- Gather all signals ---
       let clientModel = null;
       let clientBrand = null;
 
+      // Client Hints (Android)
       if (navigator.userAgentData) {
         try {
           const hints = await navigator.userAgentData.getHighEntropyValues([
             'model', 'platform', 'platformVersion'
           ]);
           clientModel = hints.model || null;
-          // Extract brand from the brands list (skip "Not A;Brand" etc.)
           const realBrand = (hints.brands || navigator.userAgentData.brands || [])
             .find(b => !b.brand.startsWith('Not'));
           if (realBrand) clientBrand = realBrand.brand;
@@ -59,7 +136,16 @@
         }
       }
 
-      // --- Send to server for full detection ---
+      // Screen dimensions (critical for iPhone resolution)
+      const screenWidth = screen.width;
+      const screenHeight = screen.height;
+      const dpr = window.devicePixelRatio;
+
+      // Canvas GPU fingerprint
+      const canvasData = getCanvasFingerprint();
+      const gpuHash = canvasData ? fnv1aHash(canvasData) : null;
+
+      // --- Send to server ---
       try {
         const res = await fetch('/api/identify', {
           method: 'POST',
@@ -68,10 +154,14 @@
             user_agent: navigator.userAgent,
             client_hint_model: clientModel,
             client_hint_brand: clientBrand,
+            screen_width: screenWidth,
+            screen_height: screenHeight,
+            device_pixel_ratio: dpr,
+            gpu_chip: gpuHash,
           }),
         });
         const data = await res.json();
-        renderResult(data);
+        renderResult(data, { screenWidth, screenHeight, dpr, gpuHash });
       } catch (err) {
         resultEl.textContent = 'Detection failed: ' + err.message;
         resultEl.style.display = 'block';
@@ -81,12 +171,13 @@
       }
     }
 
-    function renderResult(d) {
+    function renderResult(d, signals) {
       const el = document.getElementById('result');
       el.className = d.identified ? 'identified' : 'unidentified';
-      el.innerHTML = `
-        <div class="field"><span class="label">Brand:</span> ${esc(d.brand) || '—'}</div>
-        <div class="field"><span class="label">Model:</span> ${esc(d.model) || '—'}</div>
+
+      let html = `
+        <div class="field"><span class="label">Brand:</span> ${esc(d.brand) || '\u2014'}</div>
+        <div class="field"><span class="label">Model:</span> ${esc(d.model) || '\u2014'}</div>
         <div class="field"><span class="label">OS:</span> ${esc(d.os_name)} ${esc(d.os_version)}</div>
         <div class="field"><span class="label">Type:</span> ${esc(d.device_type)}</div>
         <div class="field"><span class="label">Confidence:</span>
@@ -94,6 +185,20 @@
         </div>
         <div class="field"><span class="label">Identified:</span> ${d.identified ? 'Yes' : 'No'}</div>
       `;
+
+      if (d.possible_models && d.possible_models.length > 1) {
+        html += `<div class="possible"><strong>Possible models:</strong> ${d.possible_models.map(esc).join(', ')}</div>`;
+      }
+
+      html += `
+        <div class="possible" style="margin-top:0.5rem; font-size:0.8rem; color:#666;">
+          <strong>Signals sent:</strong>
+          screen ${signals.screenWidth}x${signals.screenHeight} @${signals.dpr}x,
+          gpu hash ${signals.gpuHash || 'n/a'}
+        </div>
+      `;
+
+      el.innerHTML = html;
       el.style.display = 'block';
     }
 

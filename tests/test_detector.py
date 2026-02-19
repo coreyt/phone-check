@@ -39,10 +39,16 @@ UA_ONEPLUS_12 = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-UA_IPHONE = (
+UA_IPHONE_17 = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) "
     "Version/17.0 Mobile/15E148 Safari/604.1"
+)
+
+UA_IPHONE_18 = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/18.0 Mobile/15E148 Safari/604.1"
 )
 
 UA_GENERIC_ANDROID = (
@@ -94,8 +100,8 @@ class TestDetectFromUA:
         assert info.identified is True
 
     def test_iphone_only_gets_generic(self):
-        """Apple strips model info from the UA — we can only say 'iPhone'."""
-        info = detect_from_ua(UA_IPHONE)
+        """Apple strips model info — detect_from_ua can only say 'iPhone'."""
+        info = detect_from_ua(UA_IPHONE_17)
         assert info.brand == "Apple"
         assert info.model == "iPhone"
         assert info.confidence == "low"
@@ -115,7 +121,7 @@ class TestDetectFromUA:
 
 
 # ---------------------------------------------------------------------------
-# Full waterfall: detect() with Client Hints
+# Full waterfall: detect() with Client Hints (Android path)
 # ---------------------------------------------------------------------------
 
 class TestDetectWithClientHints:
@@ -145,10 +151,83 @@ class TestDetectWithClientHints:
         assert info.confidence == "high"
 
     def test_no_hints_falls_through(self):
-        """Without hints, detect() behaves the same as detect_from_ua()."""
+        """Without hints, detect() behaves the same as detect_from_ua() for Android."""
         info = detect(UA_PIXEL_8)
         expected = detect_from_ua(UA_PIXEL_8)
         assert info == expected
+
+
+# ---------------------------------------------------------------------------
+# Full waterfall: detect() with screen signals (iOS path)
+# ---------------------------------------------------------------------------
+
+class TestDetectIPhoneResolution:
+    """detect() should resolve iPhone models using screen + iOS + GPU."""
+
+    def test_iphone_16_pro_max_unique(self):
+        """440x956 @3x is unique — resolves to iPhone 16 Pro Max."""
+        info = detect(
+            UA_IPHONE_18,
+            screen_width=440, screen_height=956, device_pixel_ratio=3.0,
+        )
+        assert info.brand == "Apple"
+        assert info.model == "iPhone 16 Pro Max"
+        assert info.confidence == "high"
+        assert info.identified is True
+        assert info.possible_models == ("iPhone 16 Pro Max",)
+
+    def test_iphone_16_pro_unique(self):
+        """402x874 @3x is unique — resolves to iPhone 16 Pro."""
+        info = detect(
+            UA_IPHONE_18,
+            screen_width=402, screen_height=874, device_pixel_ratio=3.0,
+        )
+        assert info.model == "iPhone 16 Pro"
+        assert info.confidence == "high"
+
+    def test_iphone_393x852_narrows_with_gpu(self):
+        """393x852 + A17 chip = iPhone 15 Pro."""
+        info = detect(
+            UA_IPHONE_17,
+            screen_width=393, screen_height=852, device_pixel_ratio=3.0,
+            gpu_chip="A17",
+        )
+        assert info.model == "iPhone 15 Pro"
+        assert info.confidence == "high"
+        assert info.possible_models == ("iPhone 15 Pro",)
+
+    def test_iphone_393x852_medium_confidence_without_gpu(self):
+        """393x852 without GPU → multiple candidates, medium confidence."""
+        info = detect(
+            UA_IPHONE_18,
+            screen_width=393, screen_height=852, device_pixel_ratio=3.0,
+        )
+        assert info.brand == "Apple"
+        assert info.confidence == "medium"
+        assert len(info.possible_models) > 1
+        assert info.identified is True  # medium still counts as identified
+
+    def test_iphone_no_screen_data_falls_back(self):
+        """Without screen data, iPhone falls back to medium with many candidates."""
+        info = detect(UA_IPHONE_17)
+        assert info.brand == "Apple"
+        # Should still attempt resolution using iOS version alone
+        assert info.confidence == "medium"
+        assert len(info.possible_models) > 5
+
+    def test_iphone_screen_375x667_ios17(self):
+        """375x667 + iOS 17 = SE 2nd or 3rd gen only."""
+        info = detect(
+            UA_IPHONE_17,
+            screen_width=375, screen_height=667, device_pixel_ratio=2.0,
+        )
+        assert info.brand == "Apple"
+        possible = info.possible_models
+        assert "iPhone SE (2nd gen)" in possible
+        assert "iPhone SE (3rd gen)" in possible
+        assert "iPhone 6" not in possible  # max iOS 12
+        assert "iPhone 8" not in possible  # max iOS 16
+        assert len(possible) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -176,3 +255,7 @@ class TestDeviceInfo:
         info = DeviceInfo("Samsung", "Galaxy S22", "Android", "12", "smartphone", "high")
         with pytest.raises(AttributeError):
             info.brand = "Apple"
+
+    def test_possible_models_default_empty(self):
+        info = DeviceInfo("Samsung", "Galaxy S22", "Android", "12", "smartphone", "high")
+        assert info.possible_models == ()
