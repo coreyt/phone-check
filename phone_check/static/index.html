@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phone Check</title>
+  <!-- Ask the browser to send Client Hints on future requests -->
+  <meta http-equiv="Accept-CH" content="Sec-CH-UA-Model, Sec-CH-UA-Platform, Sec-CH-UA-Platform-Version">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { margin-bottom: 1rem; }
+    #result { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; background: #f5f5f5; }
+    #result.identified { background: #e8f5e9; }
+    #result.unidentified { background: #fff3e0; }
+    .field { margin: 0.4rem 0; }
+    .label { font-weight: 600; display: inline-block; min-width: 100px; }
+    .confidence-high { color: #2e7d32; }
+    .confidence-medium { color: #f57f17; }
+    .confidence-low { color: #e65100; }
+    .confidence-none { color: #b71c1c; }
+    #spinner { display: none; margin-top: 1rem; }
+    button { padding: 0.5rem 1.5rem; border: none; border-radius: 6px; background: #1976d2; color: #fff; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #1565c0; }
+  </style>
+</head>
+<body>
+  <h1>Phone Check</h1>
+  <p>Detect the make and model of this device.</p>
+  <button id="detect-btn">Detect My Phone</button>
+  <div id="spinner">Detecting...</div>
+  <div id="result" style="display:none"></div>
+
+  <script>
+    document.getElementById('detect-btn').addEventListener('click', run);
+
+    async function run() {
+      const spinner = document.getElementById('spinner');
+      const resultEl = document.getElementById('result');
+      spinner.style.display = 'block';
+      resultEl.style.display = 'none';
+
+      // --- Phase 1: gather Client Hints in the browser ---
+      let clientModel = null;
+      let clientBrand = null;
+
+      if (navigator.userAgentData) {
+        try {
+          const hints = await navigator.userAgentData.getHighEntropyValues([
+            'model', 'platform', 'platformVersion'
+          ]);
+          clientModel = hints.model || null;
+          // Extract brand from the brands list (skip "Not A;Brand" etc.)
+          const realBrand = (hints.brands || navigator.userAgentData.brands || [])
+            .find(b => !b.brand.startsWith('Not'));
+          if (realBrand) clientBrand = realBrand.brand;
+        } catch (e) {
+          console.warn('Client Hints unavailable:', e);
+        }
+      }
+
+      // --- Send to server for full detection ---
+      try {
+        const res = await fetch('/api/identify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_agent: navigator.userAgent,
+            client_hint_model: clientModel,
+            client_hint_brand: clientBrand,
+          }),
+        });
+        const data = await res.json();
+        renderResult(data);
+      } catch (err) {
+        resultEl.textContent = 'Detection failed: ' + err.message;
+        resultEl.style.display = 'block';
+        resultEl.className = 'unidentified';
+      } finally {
+        spinner.style.display = 'none';
+      }
+    }
+
+    function renderResult(d) {
+      const el = document.getElementById('result');
+      el.className = d.identified ? 'identified' : 'unidentified';
+      el.innerHTML = `
+        <div class="field"><span class="label">Brand:</span> ${esc(d.brand) || '—'}</div>
+        <div class="field"><span class="label">Model:</span> ${esc(d.model) || '—'}</div>
+        <div class="field"><span class="label">OS:</span> ${esc(d.os_name)} ${esc(d.os_version)}</div>
+        <div class="field"><span class="label">Type:</span> ${esc(d.device_type)}</div>
+        <div class="field"><span class="label">Confidence:</span>
+          <span class="confidence-${d.confidence}">${d.confidence}</span>
+        </div>
+        <div class="field"><span class="label">Identified:</span> ${d.identified ? 'Yes' : 'No'}</div>
+      `;
+      el.style.display = 'block';
+    }
+
+    function esc(s) {
+      if (!s) return '';
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>

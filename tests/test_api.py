@@ -1,0 +1,91 @@
+"""Tests for the FastAPI endpoints."""
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from phone_check.api import app
+
+
+UA_PIXEL_8 = (
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Mobile Safari/537.36"
+)
+
+UA_SAMSUNG_S22 = (
+    "Mozilla/5.0 (Linux; Android 12; SM-S901B) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Mobile Safari/537.36"
+)
+
+
+@pytest.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.anyio
+async def test_post_identify_pixel(client):
+    resp = await client.post("/api/identify", json={"user_agent": UA_PIXEL_8})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["brand"] == "Google"
+    assert "Pixel 8" in data["model"]
+    assert data["confidence"] == "high"
+    assert data["identified"] is True
+
+
+@pytest.mark.anyio
+async def test_post_identify_samsung(client):
+    resp = await client.post("/api/identify", json={"user_agent": UA_SAMSUNG_S22})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["brand"] == "Samsung"
+    assert data["identified"] is True
+
+
+@pytest.mark.anyio
+async def test_post_identify_with_client_hints(client):
+    resp = await client.post("/api/identify", json={
+        "user_agent": UA_SAMSUNG_S22,
+        "client_hint_model": "Galaxy S22 Ultra",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "Galaxy S22 Ultra"
+
+
+@pytest.mark.anyio
+async def test_get_identify_uses_request_ua(client):
+    resp = await client.get(
+        "/api/identify",
+        headers={"User-Agent": UA_PIXEL_8},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["brand"] == "Google"
+    assert "Pixel 8" in data["model"]
+
+
+@pytest.mark.anyio
+async def test_get_identify_reads_client_hint_header(client):
+    resp = await client.get(
+        "/api/identify",
+        headers={
+            "User-Agent": UA_SAMSUNG_S22,
+            "Sec-CH-UA-Model": '"Galaxy S22 Ultra"',
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "Galaxy S22 Ultra"
+
+
+@pytest.mark.anyio
+async def test_index_returns_html(client):
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Phone Check" in resp.text
