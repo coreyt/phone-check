@@ -157,7 +157,7 @@
             screen_width: screenWidth,
             screen_height: screenHeight,
             device_pixel_ratio: dpr,
-            gpu_chip: gpuHash,
+            gpu_chip: null,  // hash→chip mapping not yet calibrated; sending raw hash would filter out all candidates
           }),
         });
         const data = await res.json();
