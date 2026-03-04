@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from pydantic import BaseModel
 
+from phone_check.canvas_db import get_runtime_observations, load_hashes, record_observation
 from phone_check.detector import DeviceInfo, detect
 
 app = FastAPI(title="phone-check", version="0.1.0")
@@ -30,6 +31,7 @@ class IdentifyRequest(BaseModel):
     screen_height: int | None = None
     device_pixel_ratio: float | None = None
     gpu_chip: str | None = None
+    canvas_hash: str | None = None
 
 
 class IdentifyResponse(BaseModel):
@@ -89,7 +91,14 @@ async def identify_device(body: IdentifyRequest):
         screen_height=body.screen_height,
         device_pixel_ratio=body.device_pixel_ratio,
         gpu_chip=body.gpu_chip,
+        canvas_hash=body.canvas_hash,
     )
+
+    # Passive calibration: if we got both a canvas hash and a GPU chip
+    # (from WebGL), record the mapping for future lookups.
+    if body.canvas_hash and body.gpu_chip:
+        record_observation(body.canvas_hash, body.gpu_chip)
+
     return _info_to_response(info)
 
 
@@ -107,3 +116,23 @@ async def identify_device_auto(request: Request):
 
     info: DeviceInfo = detect(ua, client_hint_model=ch_model)
     return _info_to_response(info)
+
+
+@app.get("/probe", response_class=HTMLResponse)
+async def probe():
+    """Serve the canvas fingerprint probe page for BrowserStack calibration."""
+    html_path = STATIC_DIR / "probe.html"
+    return HTMLResponse(html_path.read_text())
+
+
+@app.get("/api/calibration")
+async def calibration():
+    """Diagnostic endpoint showing canvas hash calibration data."""
+    authoritative = load_hashes()
+    runtime = get_runtime_observations()
+    return {
+        "authoritative_count": len(authoritative),
+        "authoritative": authoritative,
+        "runtime_count": len(runtime),
+        "runtime": runtime,
+    }

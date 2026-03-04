@@ -1,7 +1,10 @@
 """Tests for phone_check.detector — verifies we resolve specific phone *models*."""
 
+import json
+
 import pytest
 
+from phone_check import canvas_db
 from phone_check.detector import DeviceInfo, detect, detect_from_ua
 
 
@@ -206,6 +209,55 @@ class TestDetectIPhoneResolution:
         assert info.confidence == "medium"
         assert len(info.possible_models) > 1
         assert info.identified is True  # medium still counts as identified
+
+    def test_iphone_canvas_hash_fallback(self, tmp_path, monkeypatch):
+        """Canvas hash should resolve GPU chip when WebGL returns 'Apple GPU'."""
+        data_file = tmp_path / "canvas_hashes.json"
+        data_file.write_text(json.dumps({
+            "version": 1, "canvas_version": "v1",
+            "hashes": {"aabbccdd": "A17"},
+        }))
+        monkeypatch.setattr(canvas_db, "_DATA_FILE", data_file)
+        monkeypatch.setattr(canvas_db, "_cache", None)
+
+        info = detect(
+            UA_IPHONE_17,
+            screen_width=393, screen_height=852, device_pixel_ratio=3.0,
+            canvas_hash="aabbccdd",
+        )
+        assert info.model == "iPhone 15 Pro"
+        assert info.confidence == "high"
+        assert info.possible_models == ("iPhone 15 Pro",)
+
+    def test_iphone_canvas_hash_ignored_when_gpu_chip_present(self, tmp_path, monkeypatch):
+        """Direct GPU chip should take precedence over canvas hash."""
+        data_file = tmp_path / "canvas_hashes.json"
+        data_file.write_text(json.dumps({
+            "version": 1, "canvas_version": "v1",
+            "hashes": {"aabbccdd": "A15"},  # would give wrong chip
+        }))
+        monkeypatch.setattr(canvas_db, "_DATA_FILE", data_file)
+        monkeypatch.setattr(canvas_db, "_cache", None)
+
+        info = detect(
+            UA_IPHONE_17,
+            screen_width=393, screen_height=852, device_pixel_ratio=3.0,
+            gpu_chip="A17",
+            canvas_hash="aabbccdd",
+        )
+        assert info.model == "iPhone 15 Pro"
+        assert info.confidence == "high"
+
+    def test_iphone_canvas_hash_unknown_no_effect(self):
+        """Unknown canvas hash should not break detection."""
+        info = detect(
+            UA_IPHONE_18,
+            screen_width=393, screen_height=852, device_pixel_ratio=3.0,
+            canvas_hash="unknown_hash",
+        )
+        assert info.brand == "Apple"
+        assert info.confidence == "medium"
+        assert len(info.possible_models) > 1
 
     def test_iphone_no_screen_data_falls_back(self):
         """Without screen data, iPhone falls back to medium with many candidates."""

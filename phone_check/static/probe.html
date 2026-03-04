@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas Probe</title>
+</head>
+<body>
+  <h1>Canvas Fingerprint Probe</h1>
+  <pre id="results">Running...</pre>
+
+  <script>
+    function getWebGLRenderer() {
+      try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) return null;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        if (!ext) return null;
+        return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function getCanvasFingerprint() {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 67;
+        canvas.height = 67;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(0, 0, 67, 67);
+
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(2, 2);
+        ctx.lineTo(65, 65);
+        ctx.moveTo(65, 2);
+        ctx.lineTo(2, 65);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#1a73e8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(33, 33, 28, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255, 107, 107, 0.7)';
+        ctx.beginPath();
+        ctx.arc(25, 25, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#2e7d32';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(5, 50);
+        ctx.bezierCurveTo(15, 10, 50, 60, 62, 20);
+        ctx.stroke();
+
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#000';
+        ctx.fillText('Mq@#', 8, 62);
+
+        return canvas.toDataURL();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function fnv1aHash(str) {
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        hash ^= str.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16);
+    }
+
+    (function run() {
+      const renderer = getWebGLRenderer();
+      const canvasData = getCanvasFingerprint();
+      const canvasHash = canvasData ? fnv1aHash(canvasData) : null;
+
+      const results = {
+        user_agent: navigator.userAgent,
+        screen_width: screen.width,
+        screen_height: screen.height,
+        device_pixel_ratio: window.devicePixelRatio,
+        webgl_renderer: renderer,
+        canvas_hash: canvasHash,
+      };
+
+      document.getElementById('results').textContent = JSON.stringify(results, null, 2);
+    })();
+  </script>
+</body>
+</html>

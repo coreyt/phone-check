@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from device_detector import DeviceDetector
 
+from phone_check.canvas_db import lookup_chip
 from phone_check.iphone_db import resolve_iphone
 
 
@@ -71,6 +72,7 @@ def detect(
     screen_height: int | None = None,
     device_pixel_ratio: float | None = None,
     gpu_chip: str | None = None,
+    canvas_hash: str | None = None,
 ) -> DeviceInfo:
     """Full detection waterfall.
 
@@ -101,7 +103,7 @@ def detect(
     # --- iOS path: screen + iOS version + GPU chip resolution ---
     if _is_ios(info):
         return _resolve_iphone_model(info, screen_width, screen_height,
-                                     device_pixel_ratio, gpu_chip)
+                                     device_pixel_ratio, gpu_chip, canvas_hash)
 
     return info
 
@@ -116,9 +118,17 @@ def _resolve_iphone_model(
     screen_height: int | None,
     device_pixel_ratio: float | None,
     gpu_chip: str | None,
+    canvas_hash: str | None = None,
 ) -> DeviceInfo:
     """Use screen/iOS/GPU signals to narrow the iPhone model."""
     ios_major = _parse_ios_major(info.os_version)
+
+    # Canvas hash fallback: if no direct GPU chip but we have a canvas hash,
+    # try to resolve the chip from the calibration database.
+    if not gpu_chip and canvas_hash:
+        resolved_chip = lookup_chip(canvas_hash)
+        if resolved_chip:
+            gpu_chip = resolved_chip
 
     candidates = resolve_iphone(
         screen_width=screen_width,
