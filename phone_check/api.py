@@ -60,6 +60,12 @@ def _info_to_response(info: DeviceInfo) -> IdentifyResponse:
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.get("/health")
+async def health():
+    """Health check endpoint for Render."""
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the client-side detection page."""

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: phone-check
+    runtime: python
+    pythonVersion: "3.11"
+    plan: free
+    buildCommand: pip install .
+    startCommand: uvicorn phone_check.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
