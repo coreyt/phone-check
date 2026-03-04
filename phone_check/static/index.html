@@ -49,6 +49,23 @@
     // the infrastructure is in place for it.
     // ---------------------------------------------------------------
 
+    function getWebGLRenderer() {
+      try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) return null;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        if (!ext) return null;
+        const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+        if (!renderer || renderer === 'Apple GPU') return null;
+        // Extract chip name: "Apple A16 GPU" -> "A16"
+        const match = renderer.match(/Apple (A\d+\w*)/i);
+        return match ? match[1] : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     function getCanvasFingerprint() {
       try {
         const canvas = document.createElement('canvas');
@@ -141,7 +158,8 @@
       const screenHeight = screen.height;
       const dpr = window.devicePixelRatio;
 
-      // Canvas GPU fingerprint
+      // GPU detection: try WebGL first, fall back to canvas hash
+      const gpuChip = getWebGLRenderer();
       const canvasData = getCanvasFingerprint();
       const gpuHash = canvasData ? fnv1aHash(canvasData) : null;
 
@@ -157,11 +175,11 @@
             screen_width: screenWidth,
             screen_height: screenHeight,
             device_pixel_ratio: dpr,
-            gpu_chip: null,  // hash→chip mapping not yet calibrated; sending raw hash would filter out all candidates
+            gpu_chip: gpuChip,
           }),
         });
         const data = await res.json();
-        renderResult(data, { screenWidth, screenHeight, dpr, gpuHash });
+        renderResult(data, { screenWidth, screenHeight, dpr, gpuChip, gpuHash });
       } catch (err) {
         resultEl.textContent = 'Detection failed: ' + err.message;
         resultEl.style.display = 'block';
@@ -194,7 +212,7 @@
         <div class="possible" style="margin-top:0.5rem; font-size:0.8rem; color:#666;">
           <strong>Signals sent:</strong>
           screen ${signals.screenWidth}x${signals.screenHeight} @${signals.dpr}x,
-          gpu hash ${signals.gpuHash || 'n/a'}
+          gpu ${signals.gpuChip ? signals.gpuChip + ' (WebGL)' : 'hash ' + (signals.gpuHash || 'n/a')}
         </div>
       `;
 
